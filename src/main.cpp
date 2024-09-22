@@ -9,7 +9,7 @@
 #define TINY_GSM_USE_GPRS true // Define how you're planning to connect to the internet.
 // #define DUMP_AT_COMMANDS true
 
-// set GSM PIN, if any
+// set GSM SIM CARD PIN, if any
 #define GSM_PIN ""
 
 
@@ -26,7 +26,11 @@
 
 
 #define Buffer_Size 256
+#define VALVE_RELAY_PIN A0
+#define MAX_WATERING_TIME 60 * 1000 // 1 minute
 
+bool isWatering = false;
+unsigned long startedWateringTime = 0;
 
 TinyGsmClient client(modem);
 
@@ -86,6 +90,49 @@ void check_network(){
   }
 }
 
+void processSMSCommands(String smsNumber, String smsDate, String smsText) {
+  smsText.trim();
+  smsText.toLowerCase();
+
+  // acknowledge receipt of SMS
+  if(smsText.length() > 10) {
+    SerialMon.println("***SMS too long");
+    return;
+  }
+
+
+  if (smsText.startsWith("water on")) {
+    digitalWrite(VALVE_RELAY_PIN, LOW);
+    isWatering = true;
+    startedWateringTime = millis();
+
+    SerialMon.println("Water Turned ON by " + smsNumber);
+    modem.sendSMS(smsNumber, "Water Turned ON");
+  } else if (smsText.startsWith("water off")) {
+    digitalWrite(VALVE_RELAY_PIN, HIGH);
+
+    unsigned long wateringTime = millis() - startedWateringTime;
+    if(startedWateringTime == 0)  wateringTime = 0;
+
+    isWatering = false;
+    startedWateringTime = 0;
+
+    unsigned long wateringTimeMinutes = wateringTime / 1000 / 60;
+    unsigned long wateringTimeSeconds = (wateringTime / 1000) % 60;
+    SerialMon.println("Water Turned OFF by " + smsNumber +"\nWatered for: " + String(wateringTimeMinutes) + " minutes and " + String(wateringTimeSeconds) + " seconds");
+    modem.sendSMS(smsNumber, "Water Turned OFF\nWatered for: " + String(wateringTimeMinutes) + " minutes and " + String(wateringTimeSeconds) + " seconds");
+  }else if (smsText.startsWith("status")) {
+    String status = (digitalRead(VALVE_RELAY_PIN) == HIGH) ? "OFF" : "ON";
+    SerialMon.println("Water " + status + " status requested  by " + smsNumber);
+    modem.sendSMS(smsNumber, "Water is currently turned " + status);
+  }else{
+    SerialMon.println("Unknown command " + smsText + " by " + smsNumber);
+    modem.sendSMS(smsNumber, "Unknown command '" + smsText + "'\nPlease try again!");
+  }
+  
+  
+}
+
 void parseSMS(String smsData) {
   // Split the response into lines
   int startIndex = 0;
@@ -118,7 +165,7 @@ void parseSMS(String smsData) {
       if(smsNumber.length() > 0) {
         // Print the extracted values
         Serial.println(smsDate + " - " + smsNumber + " -> " + smsText + "\n");
-        modem.sendSMS(smsNumber, "Your sms has been received successfully -> " + smsText);
+        processSMSCommands(smsNumber, smsDate, smsText);
 
         // reset the SMS number and date variables
         smsNumber = "";
@@ -130,6 +177,13 @@ void parseSMS(String smsData) {
   }
 }
 
+void deleteAllSMS() {
+  SerialMon.println("Deleting all SMS");
+  SerialAT.println("AT+CMGF=1");  // Set SMS to text mode 
+  SerialAT.println("AT+CMGDA=\"DEL ALL\"");  // Delete all SMS AT+CMGDA="DEL ALL"
+  delay(1000);
+}
+
 void checkUnreadSMS() {
   // SerialAT.println("AT+CMGF=1");  // Set SMS to text mode
   // delay(10);
@@ -139,8 +193,8 @@ void checkUnreadSMS() {
     SerialMon.write(SerialAT.read());
   }
 
-  // SerialAT.println("AT+CMGL=\"REC UNREAD\"");  // Retrieve all unread messages AT+CMGL="REC UNREAD"
-  SerialAT.println("AT+CMGL=\"ALL\"");  // Retrieve all unread messages AT+CMGL="ALL"
+  SerialAT.println("AT+CMGL=\"REC UNREAD\"");  // Retrieve all unread messages AT+CMGL="REC UNREAD"
+  // SerialAT.println("AT+CMGL=\"ALL\"");  // Retrieve all unread messages AT+CMGL="ALL"
 
   // Non-blocking response processing
   String message = "";
@@ -176,14 +230,9 @@ void checkUnreadSMS() {
 
   // Parse and display the individual SMS details
   parseSMS(message);
+  deleteAllSMS();
 }
 
-void deleteAllSMS() {
-  SerialMon.println("Deleting all SMS");
-  SerialAT.println("AT+CMGF=1");  // Set SMS to text mode 
-  SerialAT.println("AT+CMGDA=\"DEL ALL\"");  // Delete all SMS AT+CMGDA="DEL ALL"
-  delay(1000);
-}
 
 void checkSMSStorage() {
   // <memr>, <memw> and <mems> to be used for reading, writing, and storing SMs.
@@ -222,6 +271,10 @@ void updateSerial() {
 }
 
 void setup() {
+  pinMode(VALVE_RELAY_PIN,OUTPUT); // RELAY PIN   
+  digitalWrite(VALVE_RELAY_PIN,HIGH); // Normally ON Only For Chanies Relay Module 
+
+
   // Set console baud rate
   SerialMon.begin(9600);
   delay(10);
@@ -235,6 +288,7 @@ void setup() {
   // Restart takes quite some time, To skip it, call init() instead of restart()
   SerialMon.println("Initializing modem...");
   modem.restart();
+  // modem.init();
 
 
   // Unlock your SIM card with a PIN if needed
