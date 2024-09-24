@@ -24,13 +24,17 @@
   TinyGsm        modem(SerialAT);
 #endif
 
+#define VALVE_RELAY_PIN 8 // pin 8 for  in1, pin 9 for in2
+#define BUZZER_PIN 10 
+#define PUSH_BUTTON_PIN 11
+#define GSM_RESET_PIN 15
 
-#define Buffer_Size 256
-#define VALVE_RELAY_PIN A0
-#define MAX_WATERING_TIME 60 * 1000 // 1 minute
+unsigned long MAX_WATERING_TIME = 1 * 60 * 1000UL; // 1 minute
+unsigned int WATERING_BEEP_INTERVAL = 2 * 1000; // 3 seconds
 
 bool isWatering = false;
 unsigned long startedWateringTime = 0;
+unsigned long lastWateringBeepTime = 0;
 
 TinyGsmClient client(modem);
 
@@ -77,6 +81,63 @@ void log_gsm_details(){
   SerialMon.println(" bars");
 }
 
+void waterOnBeep() {
+  for (int x = 0; x < 3; x++) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(40);
+    digitalWrite(BUZZER_PIN, LOW);
+    delay(20);
+  }
+}
+void waterOffBeep() {
+  for (int x = 0; x < 2; x++) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(100);
+    digitalWrite(BUZZER_PIN, LOW);
+    delay(20);
+  }
+}
+
+void wateringBeep() {
+  for (int x = 0; x < 1; x++) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(100);
+    digitalWrite(BUZZER_PIN, LOW);
+    delay(20);
+  }
+}
+
+void turnWaterOn(){
+  digitalWrite(VALVE_RELAY_PIN, LOW);
+  waterOnBeep();
+
+  isWatering = true;
+  startedWateringTime = millis();
+}
+
+void turnWaterOff(){
+  digitalWrite(VALVE_RELAY_PIN, HIGH);
+  waterOffBeep();
+
+  isWatering = false;
+  startedWateringTime = 0;
+}
+
+void playWateringBeep() {
+  if (millis() - lastWateringBeepTime >= WATERING_BEEP_INTERVAL) {
+    lastWateringBeepTime = millis();
+    wateringBeep();
+  }
+  
+}
+
+void resetGsm() {
+  Serial.println(F("RESETTING GSM..."));
+  digitalWrite(GSM_RESET_PIN, LOW);
+  delay(200);
+  digitalWrite(GSM_RESET_PIN, HIGH);
+  delay(2000);
+}
 void check_network(){
   if (!modem.isNetworkConnected()) {
     SerialMon.println("Network disconnected");
@@ -99,32 +160,30 @@ void processSMSCommands(String smsNumber, String smsDate, String smsText) {
     SerialMon.println("***SMS too long");
     return;
   }
+  
+  unsigned long wateringTime = millis() - startedWateringTime;
+  if(startedWateringTime == 0)  wateringTime = 0;
 
+  unsigned long wateringTimeMinutes = wateringTime / 1000 / 60;
+  unsigned long wateringTimeSeconds = (wateringTime / 1000) % 60;
 
   if (smsText.startsWith("water on")) {
-    digitalWrite(VALVE_RELAY_PIN, LOW);
-    isWatering = true;
-    startedWateringTime = millis();
+    turnWaterOn();
 
     SerialMon.println("Water Turned ON by " + smsNumber);
     modem.sendSMS(smsNumber, "Water Turned ON");
   } else if (smsText.startsWith("water off")) {
-    digitalWrite(VALVE_RELAY_PIN, HIGH);
+    turnWaterOff();
 
-    unsigned long wateringTime = millis() - startedWateringTime;
-    if(startedWateringTime == 0)  wateringTime = 0;
-
-    isWatering = false;
-    startedWateringTime = 0;
-
-    unsigned long wateringTimeMinutes = wateringTime / 1000 / 60;
-    unsigned long wateringTimeSeconds = (wateringTime / 1000) % 60;
     SerialMon.println("Water Turned OFF by " + smsNumber +"\nWatered for: " + String(wateringTimeMinutes) + " minutes and " + String(wateringTimeSeconds) + " seconds");
     modem.sendSMS(smsNumber, "Water Turned OFF\nWatered for: " + String(wateringTimeMinutes) + " minutes and " + String(wateringTimeSeconds) + " seconds");
   }else if (smsText.startsWith("status")) {
     String status = (digitalRead(VALVE_RELAY_PIN) == HIGH) ? "OFF" : "ON";
     SerialMon.println("Water " + status + " status requested  by " + smsNumber);
-    modem.sendSMS(smsNumber, "Water is currently turned " + status);
+
+    String message = "Water is currently turned " + status;
+    if(isWatering) message += "\nBeen running for: " + String(wateringTimeMinutes) + " minutes and " + String(wateringTimeSeconds) + " seconds";
+    modem.sendSMS(smsNumber, message);
   }else{
     SerialMon.println("Unknown command " + smsText + " by " + smsNumber);
     modem.sendSMS(smsNumber, "Unknown command '" + smsText + "'\nPlease try again!");
@@ -211,7 +270,7 @@ void checkUnreadSMS() {
       // Check for end of response
       if (message.endsWith("OK\r\n")) {
         okReceived = true;
-        SerialMon.println("*OK received");
+        // SerialMon.println("*OK received");
         break;
       }
 
@@ -225,8 +284,8 @@ void checkUnreadSMS() {
     SerialMon.println("*Timeout occurred");
   }
 
-  SerialMon.println("Full response: " + String(message.length()) + " characters");
-  SerialMon.println(message+"\n===========\n");
+  // SerialMon.println("Full response: " + String(message.length()) + " characters");
+  // SerialMon.println(message+"\n===========\n");
 
   // Parse and display the individual SMS details
   parseSMS(message);
@@ -257,8 +316,16 @@ void sendPowerOnSMS() {
 }
 
 void updateSerial() {
+  String data = "";
   while (SerialAT.available()) {
-    SerialMon.write(SerialAT.read());
+    char c = SerialAT.read();
+    SerialMon.write(c);
+
+    data += c;
+    if (data.indexOf("+CMTI:") != -1) {
+      checkUnreadSMS();
+      break;
+    }
   }
 
   // Check if data is available on the Serial Monitor side
@@ -268,26 +335,59 @@ void updateSerial() {
     }
     checkUnreadSMS();
   }
+
+  if(isWatering) playWateringBeep();
+  if (digitalRead(PUSH_BUTTON_PIN) == HIGH) {
+    if(isWatering) turnWaterOff();
+    else turnWaterOn();
+    
+    while(digitalRead(PUSH_BUTTON_PIN) == HIGH) {}
+  } 
+}
+
+void checkWateringTimeout() {
+  if(!isWatering) return;
+
+  unsigned long wateringTime = millis() - startedWateringTime;
+  if(startedWateringTime == 0)  wateringTime = 0;
+
+  unsigned long wateringTimeMinutes = wateringTime / 1000 / 60;
+  unsigned long wateringTimeSeconds = (wateringTime / 1000) % 60;
+
+
+  if (millis() - startedWateringTime >= MAX_WATERING_TIME) {
+    // automatically stop watering
+    turnWaterOff();
+
+
+    SerialMon.println("Water Automatically Turned OFF by system \nWatered for: " + String(wateringTimeMinutes) + " minutes and " + String(wateringTimeSeconds) + " seconds");
+    modem.sendSMS("+254746287172", "Water Automatically Turned OFF\nWatered for: " + String(wateringTimeMinutes) + " minutes and " + String(wateringTimeSeconds) + " seconds");
+  }
 }
 
 void setup() {
-  pinMode(VALVE_RELAY_PIN,OUTPUT); // RELAY PIN   
-  digitalWrite(VALVE_RELAY_PIN,HIGH); // Normally ON Only For Chanies Relay Module 
-
-
   // Set console baud rate
   SerialMon.begin(9600);
-  delay(10);
+  // TinyGsmAutoBaud(SerialAT);
+  SerialAT.begin(9600);
+  delay(100);
+  
+  pinMode(VALVE_RELAY_PIN ,OUTPUT); 
+  pinMode(GSM_RESET_PIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(PUSH_BUTTON_PIN, INPUT);
+
+  digitalWrite(VALVE_RELAY_PIN, HIGH); // Normally ON Only For Chanies Relay Module 
+  digitalWrite(GSM_RESET_PIN, HIGH);
+  digitalWrite(BUZZER_PIN, LOW);
+
 
   SerialMon.println("\n\nStarting...");
 
-  // Set GSM module baud rate
-  // TinyGsmAutoBaud(SerialAT);
-  SerialAT.begin(9600);
-
   // Restart takes quite some time, To skip it, call init() instead of restart()
   SerialMon.println("Initializing modem...");
-  modem.restart();
+  resetGsm();
+  // modem.restart();
   // modem.init();
 
 
@@ -297,7 +397,7 @@ void setup() {
   SerialMon.print("Waiting for network...");
   if (!modem.waitForNetwork()) {
     SerialMon.println(" fail");
-    delay(1000);
+    resetGsm();
   }else{
     SerialMon.println(" success");
   }
@@ -305,6 +405,7 @@ void setup() {
   if (modem.isNetworkConnected()) { SerialMon.println("Network connected"); }
 
   log_gsm_details();
+  waterOnBeep();
 
 
   checkSMSStorage();
@@ -312,9 +413,7 @@ void setup() {
 }
 
 void loop() {
-  // check_network();
-  // SerialMon.println("Listing All SMS...");
-  // listAllSMS();
+  checkWateringTimeout();
   updateSerial();
 
   delay(500);
