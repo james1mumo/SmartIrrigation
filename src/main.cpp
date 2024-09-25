@@ -29,6 +29,8 @@
 #define PUSH_BUTTON_PIN 11
 #define GSM_RESET_PIN 15
 
+String ADMIN_NUMBER = "+254746287172";
+
 unsigned long MAX_WATERING_TIME = 1 * 60 * 1000UL; // 1 minute
 unsigned int WATERING_BEEP_INTERVAL = 2 * 1000; // 3 seconds
 
@@ -151,6 +153,33 @@ void check_network(){
   }
 }
 
+void sendSMS(String smsNumber, String smsText) {
+  // Set preferred message format to text mode
+  SerialAT.println("AT+CMGF=1");
+  delay(10);
+  SerialAT.println("AT+CMGS=\"" + smsNumber + "\"");
+  delay(10);
+
+  String response = "";
+  unsigned long startTime = millis();
+  while ((millis() - startTime) < 3000) {
+    if (SerialAT.available()) {
+      char c = SerialAT.read();
+      response += c;
+      if (response.endsWith(">")) {
+        break;
+      }
+      // Reset the timeout when new data is received
+      startTime = millis();
+    }
+  }
+  SerialAT.println(smsText);
+  delay(10);
+  SerialAT.println((char)26);
+  delay(100);
+}
+
+
 void processSMSCommands(String smsNumber, String smsDate, String smsText) {
   smsText.trim();
   smsText.toLowerCase();
@@ -171,22 +200,32 @@ void processSMSCommands(String smsNumber, String smsDate, String smsText) {
     turnWaterOn();
 
     SerialMon.println("Water Turned ON by " + smsNumber);
-    modem.sendSMS(smsNumber, "Water Turned ON");
+    sendSMS(smsNumber, "Water Turned ON");
   } else if (smsText.startsWith("water off")) {
     turnWaterOff();
 
     SerialMon.println("Water Turned OFF by " + smsNumber +"\nWatered for: " + String(wateringTimeMinutes) + " minutes and " + String(wateringTimeSeconds) + " seconds");
-    modem.sendSMS(smsNumber, "Water Turned OFF\nWatered for: " + String(wateringTimeMinutes) + " minutes and " + String(wateringTimeSeconds) + " seconds");
+    sendSMS(smsNumber, "Water Turned OFF\nWatered for: " + String(wateringTimeMinutes) + " minutes and " + String(wateringTimeSeconds) + " seconds");
   }else if (smsText.startsWith("status")) {
     String status = (digitalRead(VALVE_RELAY_PIN) == HIGH) ? "OFF" : "ON";
     SerialMon.println("Water " + status + " status requested  by " + smsNumber);
 
     String message = "Water is currently turned " + status;
     if(isWatering) message += "\nBeen running for: " + String(wateringTimeMinutes) + " minutes and " + String(wateringTimeSeconds) + " seconds";
-    modem.sendSMS(smsNumber, message);
-  }else{
+    sendSMS(smsNumber, message);
+  }else if ( smsText.startsWith("stats")) {
+    int8_t chargeState = 0;
+    int8_t batLevel = 0;
+    int16_t milliVolts = 0;
+    modem.getBattStats(chargeState, batLevel, milliVolts);
+    SerialMon.println("Battery stats requested  by " + smsNumber);
+    String message = "Battery level: " + String(batLevel) + "%\nBattery voltage: " + String(milliVolts / 1000.0) + "V" + "\nBattery Charge State: " + String(chargeState) ;
+    sendSMS(smsNumber, message);
+  }
+  
+  else{
     SerialMon.println("Unknown command " + smsText + " by " + smsNumber);
-    modem.sendSMS(smsNumber, "Unknown command '" + smsText + "'\nPlease try again!");
+    sendSMS(smsNumber, "Unknown command '" + smsText + "'\nPlease try again!");
   }
   
   
@@ -225,6 +264,7 @@ void parseSMS(String smsData) {
         // Print the extracted values
         Serial.println(smsDate + " - " + smsNumber + " -> " + smsText + "\n");
         processSMSCommands(smsNumber, smsDate, smsText);
+        return; //process only one sms and ignore the rest
 
         // reset the SMS number and date variables
         smsNumber = "";
@@ -239,6 +279,7 @@ void parseSMS(String smsData) {
 void deleteAllSMS() {
   SerialMon.println("Deleting all SMS");
   SerialAT.println("AT+CMGF=1");  // Set SMS to text mode 
+  delay(100);
   SerialAT.println("AT+CMGDA=\"DEL ALL\"");  // Delete all SMS AT+CMGDA="DEL ALL"
   delay(1000);
 }
@@ -288,8 +329,8 @@ void checkUnreadSMS() {
   // SerialMon.println(message+"\n===========\n");
 
   // Parse and display the individual SMS details
-  parseSMS(message);
   deleteAllSMS();
+  parseSMS(message);
 }
 
 
@@ -307,12 +348,12 @@ void checkSMSStorage() {
 }
 
 void sendPowerOnSMS() {
-  bool smsSent = modem.sendSMS("+254786689827", "Smart Irrigation System Powered On");
-  if(smsSent){
-    SerialMon.println("Power On SMS sent");
-  }else{
-    SerialMon.println("Power On SMS not sent");
-  }
+  sendSMS(ADMIN_NUMBER, "Smart Irrigation System Powered On");
+  SerialMon.println("Power On SMS sent");
+  // if(smsSent){
+  // }else{
+  //   SerialMon.println("Power On SMS not sent");
+  // }
 }
 
 void updateSerial() {
@@ -330,10 +371,14 @@ void updateSerial() {
 
   // Check if data is available on the Serial Monitor side
   if (SerialMon.available()) {
-    while (SerialMon.available()) {
-      SerialMon.read();
-    }
-    checkUnreadSMS();
+    String line = SerialMon.readStringUntil('\n');
+
+    // while (SerialMon.available()) {
+    // }
+
+    SerialMon.println("Sending command: " + line);
+    SerialAT.println(line);
+    // checkUnreadSMS();
   }
 
   if(isWatering) playWateringBeep();
@@ -361,7 +406,7 @@ void checkWateringTimeout() {
 
 
     SerialMon.println("Water Automatically Turned OFF by system \nWatered for: " + String(wateringTimeMinutes) + " minutes and " + String(wateringTimeSeconds) + " seconds");
-    modem.sendSMS("+254746287172", "Water Automatically Turned OFF\nWatered for: " + String(wateringTimeMinutes) + " minutes and " + String(wateringTimeSeconds) + " seconds");
+    sendSMS(ADMIN_NUMBER, "Water Automatically Turned OFF\nWatered for: " + String(wateringTimeMinutes) + " minutes and " + String(wateringTimeSeconds) + " seconds");
   }
 }
 
@@ -386,7 +431,7 @@ void setup() {
 
   // Restart takes quite some time, To skip it, call init() instead of restart()
   SerialMon.println("Initializing modem...");
-  resetGsm();
+  // resetGsm();
   // modem.restart();
   // modem.init();
 
@@ -395,7 +440,7 @@ void setup() {
   if (GSM_PIN && modem.getSimStatus() != 3) { modem.simUnlock(GSM_PIN); }
 
   SerialMon.print("Waiting for network...");
-  if (!modem.waitForNetwork()) {
+  if (!modem.waitForNetwork(60000U, true)) {
     SerialMon.println(" fail");
     resetGsm();
   }else{
@@ -406,6 +451,7 @@ void setup() {
 
   log_gsm_details();
   waterOnBeep();
+  sendPowerOnSMS();
 
 
   checkSMSStorage();
