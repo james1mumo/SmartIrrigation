@@ -1,4 +1,4 @@
-#define TINY_GSM_MODEM_SIM800 // Select your modem:
+#define TINY_GSM_MODEM_SIM808 // Select your modem:
 #define TINY_GSM_RX_BUFFER   1024  // Set RX buffer to 1Kb
 
 #define SerialMon Serial // Set serial for debug console
@@ -154,6 +154,9 @@ void check_network(){
 }
 
 void sendSMS(String smsNumber, String smsText) {
+  modem.sendSMS(smsNumber, smsText);
+
+  return;
   // Set preferred message format to text mode
   SerialAT.println("AT+CMGF=1");
   delay(10);
