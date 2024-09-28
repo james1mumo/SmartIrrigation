@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="home.png" />
+    <title>Smart Home Irrigation</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        text-align: center;
+      }
+      button {
+        padding: 20px 20px;
+        margin: 10px;
+        color: white;
+        border-radius: 10px;
+        border: none;
+      }
+      p {
+        font-size: 18px;
+      }
+    </style>
+    <script src="mqtt.min.js"></script>
+  </head>
+  <body>
+    <h1>Smart Home Irrigation</h1>
+    <img src="home.png" alt="">
+    <br>
+    <p id="status">Status:</p>
+    <button onclick="controlWater('on')" style="background: green;">Turn Water ON</button>
+    <button onclick="controlWater('off')" style="background: red;">Turn Water OFF</button>
+    <br>
+    <!-- <button onclick="getStatus()" style="background: rgb(35, 29, 29);">Refresh Status</button> -->
+    <!-- <p id="debug">Debug Info:</p>
+    <button onclick="getDebug()">Get Debug Info</button> -->
+    <br>
+    <p style="position: fixed; bottom: 0; width: 100%; font-size: 12px;">
+      By <a href="https://james1mumo.github.io/" target="_blank">James Mumo</a> | &copy; <script>document.write(new Date().getFullYear())</script></a>
+    </p>
+    <script>
+      var statusText =  document.getElementById("status");
+
+      function controlWater(action) {
+        publishMessage("water " + action);
+        /* fetch("/water-" + action)
+          .then((response) => response.text())
+          .then((data) => {
+            document.getElementById("status").innerText = "Status: " + data;
+          }); */
+      }
+
+      function getStatus() {
+        publishMessage("status");
+        /*fetch("/status")
+          .then((response) => response.text())
+          .then((data) => {
+            document.getElementById("status").innerText = "Status: " + data;
+          }); */
+      }
+
+      function getDebug() {
+        publishMessage("debug");
+        /*fetch("/debug")
+          .then((response) => response.text())
+          .then((data) => {
+            document.getElementById("debug").innerText = "Debug Info: " + data;
+          }); */
+      }
+
+      // Fetch initial status when the page loads
+      window.onload = getStatus;
+    </script>
+
+    <script type="text/javascript" language="javascript">
+      // Parse
+      const mqttBroker = "ws://46.101.221.32:9001"; // digital ocean VPS broker --> 9001 for websocket, 1883 for mqtt
+      const mqttUsername = "james";
+      const mqttPassword = "Foo3bar6;;";
+      const topicServer = "topic-server";
+      const topicHardware = "topic-hardware";
+
+      var options = {
+        clientId: "mqttjs_" + Math.random().toString(16).substr(2, 8),
+        username: mqttUsername,
+        password: mqttPassword,
+      };
+
+      // Create a client connection
+      var client = mqtt.connect(mqttBroker, options);
+
+      client.on("connect", function () {
+        client.subscribe(topicServer, (err) => {
+          if (!err) {
+            console.log(`Subscribed to ${topicServer}`);
+          } else {
+            console.error(`Failed to subscribe to ${topicServer}`);
+          }
+        });
+      });
+
+      // Handle incoming messages
+      client.on("message", (topic, message) => {
+        console.log(`Message received on ${topic}: ${message.toString()}`);
+        statusText.innerText = message;
+
+      });
+
+      // Handle errors
+      client.on("error", (error) => {
+        console.error(`MQTT Error: ${error}`);
+      });
+
+      // Handle connection close
+      client.on("close", () => {
+        console.log("Connection closed");
+      });
+
+      function publishMessage(message) {
+        statusText.innerText = "Loading...";
+        client.publish(topicHardware, message, function () {
+          // console.log(`Message '${message}' published successfully`);
+        });
+      }
+    </script>
+  </body>
+</html>
