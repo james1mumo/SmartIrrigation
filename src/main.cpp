@@ -4,8 +4,8 @@
 #include <WebServer.h>
 #include <PubSubClient.h>
 
-#define WIFI_SSID "foobar"
-#define WIFI_PASSWORD "foo-bar-baz"
+#define WIFI_SSID "Home Wi-Fi"
+#define WIFI_PASSWORD "10535790"
 #define WIFI_HOSTNAME "ESP32-smart-irrigation"
 #define WEB_SERVER_PORT 80
 
@@ -35,7 +35,7 @@ unsigned long mqttReconnectInterval = 30000; // 30 seconds
 
 
 // MQTT Broker
-const char *mqtt_broker = "46.101.221.32"; // digital ocean VPS server
+const char *mqtt_broker = "jamesmumo.com"; //"46.101.221.32" // digital ocean VPS server
 const char *topicHardware = "topic-hardware";
 const char *topicServer = "topic-server";
 const char *mqtt_username = "james";
@@ -137,8 +137,8 @@ void initWiFi() {
   WiFi.disconnect();
   delay(100);
 
-  WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
   WiFi.setHostname(WIFI_HOSTNAME);
+  WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
